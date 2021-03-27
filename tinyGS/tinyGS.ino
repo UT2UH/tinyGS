@@ -78,7 +78,6 @@
 #include "src/ArduinoOTA/ArduinoOTA.h"
 #include "src/OTA/OTA.h"
 #include <ESPNtpClient.h>
-#include <FailSafe.h>
 #include "src/Logger/Logger.h"
 
 #if MQTT_MAX_PACKET_SIZE != 1000
@@ -93,10 +92,6 @@
 #ifndef RADIOLIB_GODMODE
 #error "Seems you are using Arduino IDE, edit /RadioLib/src/BuildOpt.h and uncomment #define RADIOLIB_GODMODE around line 367" 
 #endif
-
-
-const int MAX_CONSECUTIVE_BOOT = 10; // Number of rapid boot cycles before enabling fail safe mode
-const time_t BOOT_FLAG_TIMEOUT = 10000; // Time in ms to reset fail safe mode activation flag
 
 ConfigManager& configManager = ConfigManager::getInstance();
 MQTT_Client& mqtt = MQTT_Client::getInstance();
@@ -177,10 +172,6 @@ void setup()
   Serial.begin(115200);
   delay(299);
 
-  FailSafe.checkBoot (MAX_CONSECUTIVE_BOOT); // Parameters are optional
-  if (FailSafe.isActive ()) // Skip all user setup if fail safe mode is activated
-    return;
-
   Log::console(PSTR("TinyGS Version %d - %s"), status.version, status.git_version);
   configManager.setWifiConnectionCallback(wifiConnected);
   configManager.init();
@@ -237,10 +228,6 @@ void setup()
 
 void loop() {
   static bool startDisplayTask = true;
-    
-  FailSafe.loop (BOOT_FLAG_TIMEOUT); // Use always this line
-  if (FailSafe.isActive ()) // Skip all user loop code if Fail Safe mode is active
-    return;
     
   configManager.doLoop();
 
