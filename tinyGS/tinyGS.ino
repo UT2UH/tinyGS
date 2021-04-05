@@ -77,8 +77,6 @@
 #include "src/Radio/Radio.h"
 #include "src/ArduinoOTA/ArduinoOTA.h"
 #include "src/OTA/OTA.h"
-#include <ESPNtpClient.h>
-#include <FailSafe.h>
 #include "src/Logger/Logger.h"
 
 #if MQTT_MAX_PACKET_SIZE != 1000
@@ -94,17 +92,15 @@
 #error "Seems you are using Arduino IDE, edit /RadioLib/src/BuildOpt.h and uncomment #define RADIOLIB_GODMODE around line 367" 
 #endif
 
-
-const int MAX_CONSECUTIVE_BOOT = 10; // Number of rapid boot cycles before enabling fail safe mode
-const time_t BOOT_FLAG_TIMEOUT = 10000; // Time in ms to reset fail safe mode activation flag
-
 ConfigManager& configManager = ConfigManager::getInstance();
 MQTT_Client& mqtt = MQTT_Client::getInstance();
 Radio& radio = Radio::getInstance();
 
 TaskHandle_t dispUpdate_handle;
 
-const char* ntpServer = "time.cloudflare.com";
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 0; // 3600;         // 3600 for Spain
+const int   daylightOffset_sec = 0; // 3600;
 void printLocalTime();
 
 // Global status
@@ -113,41 +109,14 @@ Status status;
 void printControls();
 void switchTestmode();
 
-void ntp_cb (NTPEvent_t e)
-{
-  switch (e.event) {
-    case timeSyncd:
-    case partlySync:
-      //Serial.printf ("[NTP Event] %s\n", NTP.ntpEvent2str (e));
-      status.time_offset = e.info.offset;
-      break;
-    default:
-      break;
-  }
-}
-
-void displayUpdate_task (void* arg)
-{
-  for (;;){
-      displayUpdate ();
-  }
-}
 
 void wifiConnected()
 {
-  NTP.setInterval (120); // Sync each 2 minutes
-  NTP.setTimeZone (configManager.getTZ ()); // Get TX from config manager
-  NTP.onNTPSyncEvent (ntp_cb); // Register event callback
-  NTP.setMinSyncAccuracy (2000); // Sync accuracy target is 2 ms
-  NTP.settimeSyncThreshold (1000); // Sync only if calculated offset absolute value is greater than 1 ms
-  NTP.setMaxNumSyncRetry (2); // 2 resync trials if accuracy not reached
-  NTP.begin (ntpServer); // Start NTP client
-  Serial.printf ("NTP started");
-  
-  time_t startedSync = millis ();
-  while (NTP.syncStatus() != syncd && millis() - startedSync < 5000) // Wait 5 seconds to get sync
-  {
-    delay (100);
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  if (strcmp (configManager.getTZ(), "")) {
+	  setenv("TZ", configManager.getTZ(), 1);
+	  ESP_LOGD (LOG_TAG, "Set timezone value as %s", configManager.getTZ());
+	  tzset();
   }
 
   printLocalTime();
@@ -176,10 +145,6 @@ void setup()
 {
   Serial.begin(115200);
   delay(299);
-
-  FailSafe.checkBoot (MAX_CONSECUTIVE_BOOT); // Parameters are optional
-  if (FailSafe.isActive ()) // Skip all user setup if fail safe mode is activated
-    return;
 
   Log::console(PSTR("TinyGS Version %d - %s"), status.version, status.git_version);
   configManager.setWifiConnectionCallback(wifiConnected);
@@ -237,10 +202,6 @@ void setup()
 
 void loop() {
   static bool startDisplayTask = true;
-    
-  FailSafe.loop (BOOT_FLAG_TIMEOUT); // Use always this line
-  if (FailSafe.isActive ()) // Skip all user loop code if Fail Safe mode is active
-    return;
     
   configManager.doLoop();
 
@@ -319,19 +280,7 @@ void loop() {
     return;
   }
 
-  if (startDisplayTask)
-  {
-    startDisplayTask = false;
-    xTaskCreateUniversal (
-            displayUpdate_task,           // Display loop function
-            "Display Update",             // Task name
-            4096,                         // Stack size
-            NULL,                         // Function argument, not needed
-            1,                            // Priority, running higher than 1 causes errors on MQTT comms
-            &dispUpdate_handle,           // Task handle
-            CONFIG_ARDUINO_RUNNING_CORE); // Running core, should be 1
-  }
-
+  displayUpdate();
   radio.listen();
 }
 
